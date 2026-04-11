@@ -1,5 +1,5 @@
 python-telegram-bot==20.7
-httpx==0.26.0
+httpx==0.25.2
 aiofiles==23.2.1
 python-dotenv==1.0.0
 pydantic==2.5.3
