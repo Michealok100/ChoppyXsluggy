@@ -15,7 +15,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Optional
 
-from utils.logger import log
+from logger import log
 
 
 @dataclass
