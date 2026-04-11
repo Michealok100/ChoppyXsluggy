@@ -7,7 +7,7 @@ Keeps all MarkdownV2 escaping and layout logic out of the handler files.
 from __future__ import annotations
 
 from models import Person, SearchResult
-from utils.synonyms import get_synonyms
+from synonyms import get_synonyms
 
 # Characters that must be escaped in MarkdownV2
 _MD2_ESCAPE = r"_*[]()~`>#+-=|{}.!"
