@@ -14,7 +14,7 @@ This is the single import needed by the bot layer.
 from __future__ import annotations
 
 from models import Person, SearchRequest, SearchResult
-from parser.linkedin_parser import parse_organic_results
+from linkedin_parser import parse_organic_results
 from scraper.xray_scraper import get_client, run_xray_search
 from utils.logger import log
 from utils.rate_limiter import rate_limiter
