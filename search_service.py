@@ -11,14 +11,13 @@ Glues together:
 This is the single import needed by the bot layer.
 """
 
-from __future__ import annotations
-
 from models import Person, SearchRequest, SearchResult
 from linkedin_parser import parse_organic_results
-from scraper.xray_scraper import get_client, run_xray_search
-from utils.logger import log
-from utils.rate_limiter import rate_limiter
-from utils.session import sessions
+from xray_scraper import get_client, run_xray_search
+from logger import log
+from rate_limiter import rate_limiter
+from session import sessions
+from storage import append_results
 from utils.storage import append_results
 
 
