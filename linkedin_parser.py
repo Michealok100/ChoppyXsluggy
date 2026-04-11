@@ -17,7 +17,7 @@ import re
 from urllib.parse import urlparse
 
 from models import Person
-from utils.logger import log
+from logger import log
 
 # ── Regex helpers ────────────────────────────────────────────────────────────
 
