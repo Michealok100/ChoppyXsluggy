@@ -15,7 +15,7 @@ import aiofiles
 
 from config import settings
 from models import Person
-from utils.logger import log
+from logger import log
 
 _HEADERS = ["name", "title", "company", "linkedin_url", "timestamp"]
 
