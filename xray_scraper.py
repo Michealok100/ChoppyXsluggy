@@ -212,8 +212,7 @@ def get_client():
     global _serpapi_client
     if _serpapi_client is None:
         if settings.SERPAPI_KEY.upper() == "MOCK":
-          from mock_client import MockSerpAPIClient
-            
+            from mock_client import MockSerpAPIClient
             log.warning("Using MOCK SerpAPI client — no real searches will be made.")
             _serpapi_client = MockSerpAPIClient()
         else:
