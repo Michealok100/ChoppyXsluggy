@@ -9,8 +9,7 @@ All state is in-process (no Redis needed for single-instance deployments).
 For multi-instance deployments, swap _store for a shared cache.
 """
 
-from __future__ import annotations
-
+from logger import log
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
