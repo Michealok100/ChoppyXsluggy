@@ -18,7 +18,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from bot.formatters import (
+from formatters import (
     HELP_TEXT,
     SEARCHING_TEXT,
     format_search_results,
@@ -26,11 +26,11 @@ from bot.formatters import (
 )
 from config import settings
 from models import SearchRequest
-from scraper.search_service import execute_search
-from utils.logger import log
-from utils.rate_limiter import rate_limiter
-from utils.session import sessions
-from utils.storage import clear_results, get_export_path
+from search_service import execute_search
+from logger import log
+from rate_limiter import rate_limiter
+from session import sessions
+from storage import clear_results, get_export_path
 
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -53,10 +53,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ── /search ───────────────────────────────────────────────────────────────────
 
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Main search command.
-    Usage: /search job title | location
-    """
     user = update.effective_user
     raw_args = " ".join(context.args).strip() if context.args else ""
 
@@ -85,7 +81,6 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ── /repeat ───────────────────────────────────────────────────────────────────
 
 async def cmd_repeat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Re-run the user's most recent search."""
     user = update.effective_user
     last = sessions.get_last_search(user.id)
 
@@ -107,7 +102,6 @@ async def cmd_repeat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ── /history ──────────────────────────────────────────────────────────────────
 
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show the user's last 10 searches."""
     user = update.effective_user
     history = sessions.get_history(user.id)
 
@@ -136,7 +130,6 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 # ── /status ───────────────────────────────────────────────────────────────────
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show rate-limit usage and session stats."""
     user = update.effective_user
     rl = rate_limiter.stats(user.id)
     sess = sessions.get_stats(user.id)
@@ -161,7 +154,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ── /export ───────────────────────────────────────────────────────────────────
 
 async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send the user's accumulated CSV results as a file download."""
     user = update.effective_user
     log.info("/export from user {uid}", uid=user.id)
 
@@ -197,7 +189,6 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ── /clear ────────────────────────────────────────────────────────────────────
 
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Delete the user's saved CSV data."""
     user = update.effective_user
     await clear_results(user.id)
     log.info("/clear from user {uid}", uid=user.id)
@@ -216,14 +207,12 @@ async def _run_search(
     job_title: str,
     location: str,
 ) -> None:
-    """Core search logic shared by /search and /repeat."""
     user = update.effective_user
     log.info(
         "Search request — job: '{j}' | location: '{l}' | user: {uid}",
         j=job_title, l=location, uid=user.id,
     )
 
-    # Build and validate request object
     try:
         request = SearchRequest(
             job_title=job_title,
@@ -238,20 +227,17 @@ async def _run_search(
         )
         return
 
-    # Send "Searching…" status indicator
     status_msg = await update.message.reply_text(
         SEARCHING_TEXT, parse_mode=ParseMode.MARKDOWN_V2
     )
 
     search_result = await execute_search(request)
 
-    # Delete the status message (best-effort)
     try:
         await status_msg.delete()
     except Exception:
         pass
 
-    # Handle special error states before general formatting
     if search_result.error == "already_searching":
         await update.message.reply_text(
             "⏳ A search is already in progress\\. Please wait for it to finish\\.",
@@ -267,7 +253,6 @@ async def _run_search(
         )
         return
 
-    # General result formatting
     messages = format_search_results(search_result)
     for msg in messages:
         await update.message.reply_text(
