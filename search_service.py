@@ -18,7 +18,7 @@ from logger import log
 from rate_limiter import rate_limiter
 from session import sessions
 from storage import append_results
-from utils.storage import append_results
+from storage import append_results
 
 
 async def execute_search(request: SearchRequest) -> SearchResult:
