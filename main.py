@@ -1,17 +1,12 @@
 """
 main.py — Application entrypoint.
-
 Run with:  python main.py
            python main.py --mock     (use mock SerpAPI client, no real API calls)
 """
-
 from __future__ import annotations
-
 import sys
 from pathlib import Path
-
 sys.path.insert(0, str(Path(__file__).parent))
-
 from telegram import BotCommand
 from telegram.ext import (
     Application,
@@ -19,8 +14,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
-from bot.handlers import (
+from handlers import (
     cmd_clear,
     cmd_export,
     cmd_help,
@@ -33,8 +27,7 @@ from bot.handlers import (
     handle_text,
 )
 from config import settings
-from utils.logger import log
-
+from logger import log
 
 async def post_init(application: Application) -> None:
     """Register the bot's command menu visible in Telegram clients."""
@@ -51,7 +44,6 @@ async def post_init(application: Application) -> None:
     )
     log.info("Bot command menu registered.")
 
-
 def build_application() -> Application:
     app = (
         Application.builder()
@@ -59,7 +51,6 @@ def build_application() -> Application:
         .post_init(post_init)
         .build()
     )
-
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("help",    cmd_help))
     app.add_handler(CommandHandler("search",  cmd_search))
@@ -70,9 +61,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("clear",   cmd_clear))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
-
     return app
-
 
 def main() -> None:
     # --mock flag: override SERPAPI_KEY so the mock client is used
@@ -80,7 +69,6 @@ def main() -> None:
         import os
         os.environ["SERPAPI_KEY"] = "MOCK"
         log.warning("Running in MOCK mode — no real API calls will be made.")
-
     settings.validate()
     log.info("Starting LinkedIn X-ray Bot…")
     app = build_application()
@@ -89,7 +77,6 @@ def main() -> None:
         allowed_updates=["message"],
         drop_pending_updates=True,
     )
-
 
 if __name__ == "__main__":
     main()
