@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import csv
 from io import StringIO
-from pathlib import Path
+from logger import log
 
 import aiofiles
 
