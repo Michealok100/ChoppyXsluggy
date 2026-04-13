@@ -18,7 +18,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from bot.formatters import (
+from formatters import (
     HELP_TEXT,
     SEARCHING_TEXT,
     format_industry_list,
