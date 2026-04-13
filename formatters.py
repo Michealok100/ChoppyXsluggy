@@ -5,8 +5,8 @@ bot/formatters.py — Telegram MarkdownV2 message formatting.
 from __future__ import annotations
 
 from models import Person, SearchResult
-from utils.industries import INDUSTRY_LIST
-from utils.synonyms import get_synonyms
+from industries import INDUSTRY_LIST
+from synonyms import get_synonyms
 
 _MD2_ESCAPE = r"_*[]()~`>#+-=|{}.!"
 
