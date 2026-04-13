@@ -28,11 +28,11 @@ from formatters import (
 from config import settings
 from models import SearchRequest
 from scraper.search_service import execute_search
-from utils.industries import INDUSTRY_LIST, is_valid_industry
-from utils.logger import log
-from utils.rate_limiter import rate_limiter
-from utils.session import sessions
-from utils.storage import clear_results, get_export_path
+from industries import INDUSTRY_LIST, is_valid_industry
+from logger import log
+from rate_limiter import rate_limiter
+from session import sessions
+from storage import clear_results, get_export_path
 
 
 # ── /start ────────────────────────────────────────────────────────────────────
