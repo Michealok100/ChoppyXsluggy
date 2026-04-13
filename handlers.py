@@ -27,7 +27,7 @@ from formatters import (
 )
 from config import settings
 from models import SearchRequest
-from scraper.search_service import execute_search
+from search_service import execute_search
 from industries import INDUSTRY_LIST, is_valid_industry
 from logger import log
 from rate_limiter import rate_limiter
