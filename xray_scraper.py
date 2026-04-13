@@ -19,9 +19,9 @@ from tenacity import (
 )
 
 from config import settings
-from utils.industries import build_industry_query_fragment
-from utils.logger import log
-from utils.synonyms import expand_location, get_synonyms
+from industries import build_industry_query_fragment
+from logger import log
+from synonyms import expand_location, get_synonyms
 
 
 # ── Query builders ────────────────────────────────────────────────────────────
