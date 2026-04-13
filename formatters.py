@@ -1,166 +1,152 @@
 """
-bot/formatters.py — Telegram message formatting helpers.
-
-Keeps all MarkdownV2 escaping and layout logic out of the handler files.
+bot/formatters.py — Telegram MarkdownV2 message formatting.
 """
 
 from __future__ import annotations
 
 from models import Person, SearchResult
-from synonyms import get_synonyms
+from utils.industries import INDUSTRY_LIST
+from utils.synonyms import get_synonyms
 
-# Characters that must be escaped in MarkdownV2
 _MD2_ESCAPE = r"_*[]()~`>#+-=|{}.!"
 
 
 def md2(text: str) -> str:
-    """Escape *text* for Telegram MarkdownV2."""
+    """Escape text for Telegram MarkdownV2."""
     for ch in _MD2_ESCAPE:
         text = text.replace(ch, f"\\{ch}")
     return text
 
 
-# ── Individual blocks ────────────────────────────────────────────────────────
-
-
 def format_person(person: Person, index: int) -> str:
-    """Return one person as a MarkdownV2-safe Telegram block."""
-    name = md2(person.name)
-    title = md2(person.title)
-    company = md2(person.company)
-    url = person.linkedin_url  # URLs must NOT be escaped
-
     return (
-        f"*{index}\\.* 👤 *{name}*\n"
-        f"   💼 {title}\n"
-        f"   🏢 {company}\n"
-        f"   🔗 [LinkedIn Profile]({url})\n"
+        f"*{index}\\.* 👤 *{md2(person.name)}*\n"
+        f"   💼 {md2(person.title)}\n"
+        f"   🏢 {md2(person.company)}\n"
+        f"   🔗 [LinkedIn Profile]({person.linkedin_url})\n"
     )
 
 
-# ── Full result messages ─────────────────────────────────────────────────────
-
-
 def format_search_results(result: SearchResult) -> list[str]:
-    """
-    Convert a SearchResult into a list of Telegram messages.
-
-    Multiple messages are returned when the result list is large
-    (Telegram has a 4096-char message limit).
-    """
     if not result.found:
         return [_format_no_results(result)]
 
     messages: list[str] = []
-    job = md2(result.request.job_title)
-    loc = md2(result.request.location)
-    count = len(result.people)
+    job      = md2(result.request.job_title)
+    loc      = md2(result.request.location)
+    industry = result.request.industry
+    count    = len(result.people)
 
-    # ── Header ───────────────────────────────────────────────────────────────
-    fallback_note = ""
-    if result.fallback_level == 1:
-        fallback_note = "\n_\\(broadened title search\\)_"
-    elif result.fallback_level == 2:
-        fallback_note = "\n_\\(broadened location search\\)_"
-    elif result.fallback_level == 3:
-        fallback_note = "\n_\\(location removed — national results\\)_"
+    # Fallback note
+    fallback_note = {
+        1: "\n_\\(broadened title search\\)_",
+        2: "\n_\\(broadened location search\\)_",
+        3: "\n_\\(industry filter kept, location removed\\)_",
+        4: "\n_\\(location and industry filter removed\\)_",
+    }.get(result.fallback_level, "")
+
+    # Industry badge
+    industry_line = f"🏭 *Industry:* {md2(industry)}\n" if industry else ""
 
     header = (
         f"🔍 *Search Results*\n"
         f"📌 *Role:* {job}\n"
         f"📍 *Location:* {loc}\n"
+        f"{industry_line}"
         f"👥 *Found:* {count} professionals{fallback_note}\n"
         f"{'─' * 30}\n"
     )
 
     current_msg = header
-    batch_start = 1
 
     for i, person in enumerate(result.people, start=1):
         block = format_person(person, i)
-
-        # Telegram limit is 4096 chars; leave headroom for safety
         if len(current_msg) + len(block) > 3800:
             messages.append(current_msg)
-            current_msg = f"_\\(continued — {batch_start}\\-{i-1} above\\)_\n\n"
-            batch_start = i
-
+            current_msg = ""
         current_msg += block + "\n"
 
     if current_msg.strip():
         messages.append(current_msg)
 
-    # ── Footer on last message ───────────────────────────────────────────────
-    footer = (
+    messages[-1] += (
         "\n📥 Use /export to download results as CSV\\.\n"
-        "🔎 Run /search again for a new query\\."
+        "🏭 Use /industries to change industry filter\\."
     )
-    messages[-1] += footer
-
     return messages
 
 
 def _format_no_results(result: SearchResult) -> str:
-    job = md2(result.request.job_title)
-    loc = md2(result.request.location)
+    job      = md2(result.request.job_title)
+    loc      = md2(result.request.location)
+    industry = result.request.industry
     synonyms = get_synonyms(result.request.job_title)
+
+    ind_note = (
+        f"\n\n💡 Industry filter *{md2(industry)}* was applied\\. "
+        f"Try removing it with /industries → _No filter_\\."
+        if industry else ""
+    )
     syn_text = (
-        "\n\n💡 *Suggested alternatives:*\n" +
+        "\n\n💡 *Suggested title alternatives:*\n" +
         "\n".join(f"  • {md2(s)}" for s in synonyms[:5])
-        if synonyms
-        else ""
+        if synonyms else ""
     )
     return (
         f"😕 *No results found*\n\n"
-        f"I searched for *{job}* in *{loc}* using multiple fallback "
-        f"strategies but couldn't find matching LinkedIn profiles\\."
-        f"{syn_text}\n\n"
+        f"Searched for *{job}* in *{loc}*"
+        f"{' \\[' + md2(industry) + '\\]' if industry else ''}\\."
+        f"{ind_note}{syn_text}\n\n"
         f"Try:\n"
-        f"  • A different job title or synonym\n"
+        f"  • A different job title\n"
         f"  • A broader location \\(state instead of city\\)\n"
-        f"  • `/search {job} \\| {md2(result.request.location.split(',')[1].strip() if ',' in result.request.location else result.request.location)}`"
+        f"  • Removing the industry filter with /industries"
     )
 
 
-# ── Static help text ─────────────────────────────────────────────────────────
+def format_industry_list() -> str:
+    """Return a plain-text list of all industries (for /help reference)."""
+    lines = ["🏭 *Available Industry Filters*\n"]
+    for ind in INDUSTRY_LIST:
+        lines.append(f"  • {md2(ind)}")
+    lines.append("\n_Use /industries to select one interactively\\._")
+    return "\n".join(lines)
 
 
 HELP_TEXT = """
 🤖 *LinkedIn X\\-Ray Search Bot*
-_Find professionals by role \\& location_
+_Find professionals by role, location \\& industry_
 
 ━━━━━━━━━━━━━━━━━━━━━
 *Commands*
 ━━━━━━━━━━━━━━━━━━━━━
 
 🔍 */search* `job title | location`
-Search for professionals on LinkedIn\\.
-_Example:_ `/search bookkeeper | Birmingham, Alabama`
-_Example:_ `/search software engineer | Austin, TX`
+🔍 */search* `job title | location | industry`
+_Search LinkedIn for professionals\\._
 
-📥 */export*
-Download all your previous results as a CSV file\\.
+Examples:
+`/search bookkeeper | Birmingham, Alabama`
+`/search nurse | Texas | Healthcare`
+`/search software engineer | Austin, TX | Technology`
 
-❓ */help*
-Show this message\\.
+🏭 */industries*
+Browse and select an industry filter interactively\\.
+Your selection is saved for all future searches\\.
+
+🔄 */repeat* — Re\\-run your last search
+📋 */history* — Your last 10 searches
+📊 */status* — Usage stats \\& active filter
+📥 */export* — Download results as CSV
+🗑️ */clear* — Delete your saved results
+❓ */help* — Show this message
 
 ━━━━━━━━━━━━━━━━━━━━━
-*How it works*
+*Industry filter*
 ━━━━━━━━━━━━━━━━━━━━━
-The bot uses Google X\\-ray search against LinkedIn to find
-people currently working in your target role\\. Results include:
-👤 Full name  💼 Job title  🏢 Company  🔗 LinkedIn URL
-
-If no results are found, the bot automatically broadens the
-search \\(synonyms → larger area → national\\)\\.
-
-━━━━━━━━━━━━━━━━━━━━━
-*Tips*
-━━━━━━━━━━━━━━━━━━━━━
-• Use common job title variations for best results
-• State\\-level searches return more people than city\\-level
-• Run multiple searches — results are saved cumulatively
+Add an industry to narrow results to a specific sector\\.
+Run /industries to see all 25\\+ options\\.
+If no results found, the bot auto\\-retries without the filter\\.
 """.strip()
-
 
 SEARCHING_TEXT = "🔍 Searching LinkedIn… This may take 10\\-20 seconds\\."
