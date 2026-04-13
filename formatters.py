@@ -92,17 +92,14 @@ def _format_no_results(result: SearchResult) -> str:
         "\n".join(f"  • {md2(s)}" for s in synonyms[:5])
         if synonyms else ""
     )
-    return (
-        f"😕 *No results found*\n\n"
-        f"Searched for *{job}* in *{loc}*"
-        f"{' \\[' + md2(industry) + '\\]' if industry else ''}\\."
-        f"{ind_note}{syn_text}\n\n"
-        f"Try:\n"
-        f"  • A different job title\n"
-        f"  • A broader location \\(state instead of city\\)\n"
-        f"  • Removing the industry filter with /industries"
-    )
-
+ industry_tag = f" \\[{md2(industry)}\\]" if industry else ""
+return (
+    f"😕 *No results found*\n\n"
+    f"Searched for *{job}* in *{loc}*"
+    f"{industry_tag}\\."
+    f"{ind_note}{syn_text}\n\n"
+    ...
+)
 
 def format_industry_list() -> str:
     """Return a plain-text list of all industries (for /help reference)."""
