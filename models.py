@@ -1,8 +1,5 @@
 """
 models.py — Shared data models (Pydantic v2)
-
-All layers (scraper, parser, bot) import from here so the shape
-of a "person" record is defined in one place.
 """
 
 from __future__ import annotations
@@ -10,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel, field_validator, HttpUrl
+from pydantic import BaseModel, field_validator
 
 
 class Person(BaseModel):
@@ -20,9 +17,9 @@ class Person(BaseModel):
     title: str
     company: str
     linkedin_url: str
-    snippet: Optional[str] = None          # raw Google snippet kept for debug
-    relevance_score: float = 0.0           # 0-1 ranking score
-    timestamp: datetime = None             # set on creation
+    snippet: Optional[str] = None
+    relevance_score: float = 0.0
+    timestamp: datetime = None
 
     def __init__(self, **data):
         if "timestamp" not in data or data["timestamp"] is None:
@@ -32,14 +29,12 @@ class Person(BaseModel):
     @field_validator("linkedin_url")
     @classmethod
     def normalise_url(cls, v: str) -> str:
-        """Strip query params / tracking suffixes from LinkedIn URLs."""
         if "?" in v:
             v = v.split("?")[0]
         v = v.rstrip("/")
         return v
 
     def as_telegram_block(self, index: int) -> str:
-        """Format one person as a Telegram message block."""
         return (
             f"*{index}.* 👤 *{self.name}*\n"
             f"   💼 {self.title}\n"
@@ -62,6 +57,7 @@ class SearchRequest(BaseModel):
 
     job_title: str
     location: str
+    industry: Optional[str] = None          # ← NEW: optional industry filter
     user_id: int
     chat_id: int
 
@@ -73,6 +69,14 @@ class SearchRequest(BaseModel):
             raise ValueError("Field must not be empty.")
         return v
 
+    @field_validator("industry")
+    @classmethod
+    def clean_industry(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        return v if v else None
+
 
 class SearchResult(BaseModel):
     """Aggregated output of a full search cycle."""
@@ -80,7 +84,7 @@ class SearchResult(BaseModel):
     request: SearchRequest
     people: list[Person] = []
     query_used: str = ""
-    fallback_level: int = 0        # 0 = exact, 1-4 = progressive fallback
+    fallback_level: int = 0
     error: Optional[str] = None
 
     @property
