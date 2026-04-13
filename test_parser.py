@@ -164,3 +164,88 @@ class TestLocationExpansion:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ── Industry filter tests ─────────────────────────────────────────────────────
+
+class TestIndustryFilter:
+    def test_known_industry_returns_keywords(self):
+        from utils.industries import get_industry_keywords
+        kw = get_industry_keywords("Healthcare")
+        assert len(kw) > 0
+        assert any("healthcare" in k.lower() for k in kw)
+
+    def test_unknown_industry_returns_empty(self):
+        from utils.industries import get_industry_keywords
+        assert get_industry_keywords("MadeUpIndustry999") == []
+
+    def test_case_insensitive_lookup(self):
+        from utils.industries import get_industry_keywords
+        assert get_industry_keywords("technology") == get_industry_keywords("Technology")
+
+    def test_is_valid_industry(self):
+        from utils.industries import is_valid_industry
+        assert is_valid_industry("Finance") is True
+        assert is_valid_industry("finance") is True
+        assert is_valid_industry("XYZFake") is False
+
+    def test_build_fragment_format(self):
+        from utils.industries import build_industry_query_fragment
+        frag = build_industry_query_fragment("Healthcare")
+        assert frag.startswith("(")
+        assert frag.endswith(")")
+        assert "OR" in frag
+
+    def test_build_fragment_empty_for_unknown(self):
+        from utils.industries import build_industry_query_fragment
+        assert build_industry_query_fragment("NoSuchIndustry") == ""
+
+    def test_industry_list_not_empty(self):
+        from utils.industries import INDUSTRY_LIST
+        assert len(INDUSTRY_LIST) >= 20
+
+    def test_query_includes_industry_fragment(self):
+        from scraper.xray_scraper import build_xray_query
+        q = build_xray_query("nurse", "Texas", industry="Healthcare")
+        assert "healthcare" in q.lower() or "hospital" in q.lower()
+
+    def test_query_without_industry_has_no_industry_terms(self):
+        from scraper.xray_scraper import build_xray_query
+        q = build_xray_query("nurse", "Texas", industry=None)
+        from utils.industries import get_industry_keywords
+        kw = get_industry_keywords("Healthcare")
+        assert not any(k.lower() in q.lower() for k in kw)
+
+    def test_fallback_queries_drop_industry_at_level_4(self):
+        from scraper.xray_scraper import build_fallback_queries
+        queries = build_fallback_queries("nurse", "Texas", industry="Healthcare")
+        levels = {lvl: q for q, lvl in queries}
+        # Level 4 (widest) should not contain healthcare keywords
+        if 4 in levels:
+            from utils.industries import get_industry_keywords
+            kw = get_industry_keywords("Healthcare")
+            assert not any(k.lower() in levels[4].lower() for k in kw)
+
+    @pytest.mark.asyncio
+    async def test_full_pipeline_with_industry(self, tmp_path, monkeypatch):
+        import os
+        monkeypatch.setenv("SERPAPI_KEY", "MOCK")
+        import scraper.xray_scraper as xs
+        xs._serpapi_client = None
+        import config
+        config.settings.SERPAPI_KEY = "MOCK"
+        config.settings.DATA_DIR = tmp_path
+
+        from models import SearchRequest
+        from scraper.search_service import execute_search
+
+        request = SearchRequest(
+            job_title="bookkeeper",
+            location="Birmingham, Alabama",
+            industry="Finance",
+            user_id=888,
+            chat_id=888,
+        )
+        result = await execute_search(request)
+        # Should still return results (mock ignores industry in fixture matching)
+        assert result.error is None or result.found
