@@ -226,3 +226,15 @@ def get_client():
         else:
             _serpapi_client = SerpAPIClient(settings.SERPAPI_KEY)
     return _serpapi_client
+
+async def run_person_search(
+    name: str,
+    job_title: str,
+    client,
+) -> tuple[list[dict], str]:
+    """X-ray search for a specific person by name + job title."""
+    query = f'site:linkedin.com/in "{name}" "{job_title}"'
+    log.info("Person search query: {q}", q=query)
+    raw = await asyncio.to_thread(client.search, query)
+    organic = raw.get("organic_results", [])
+    return organic, query
