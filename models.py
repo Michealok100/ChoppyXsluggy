@@ -54,7 +54,7 @@ class Person(BaseModel):
 
 class SearchRequest(BaseModel):
     """Validated user search request."""
-
+    name: str | None = None 
     job_title: str
     location: str
     industry: Optional[str] = None          # ← NEW: optional industry filter
