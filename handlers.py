@@ -27,7 +27,6 @@ from formatters import (
 )
 from config import settings
 from models import SearchRequest
-from search_service import execute_search
 from search_service import execute_search, execute_person_search
 from industries import INDUSTRY_LIST, is_valid_industry
 from logger import log
@@ -125,29 +124,38 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     raw_args = " ".join(context.args).strip() if context.args else ""
 
     if not raw_args or "|" not in raw_args:
-        await update.message.reply_text(
+      await update.message.reply_text(
             "⚠️ *Usage:*\n"
             "`/search job title \\| location`\n"
-            "`/search name \\| job title \\| location` \\(person lookup\\)\n\n"
+            "`/search job title \\| location \\| industry`\n"
+            "`/search @Full Name \\| job title \\| location` \\(person lookup\\)\n\n"
             "_Examples:_\n"
             "`/search bookkeeper \\| Birmingham, Alabama`\n"
-            "`/search John Smith \\| accountant \\| New York`",
+            "`/search @Shannon Lee \\| dental hygienist \\| Auburn, Alabama`",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
     parts = [p.strip() for p in raw_args.split("|")]
 
-    # Detect person search: 3 parts where first part looks like a name
-    # (no common job-title keywords, contains a space like "John Smith")
-    if len(parts) == 3 and " " in parts[0] and not any(
-        kw in parts[0].lower() for kw in ["engineer", "manager", "director", "analyst", "developer"]
-    ):
-        # Person search: name | job title | location
-        name, job_title, location = parts[0], parts[1], parts[2]
+ # Detect person search: first part starts with @
+    if parts[0].startswith("@"):
+        name = parts[0][1:].strip()
+        job_title = parts[1] if len(parts) > 1 else ""
+        location  = parts[2] if len(parts) > 2 else ""
+
+        if not name or not job_title or not location:
+            await update.message.reply_text(
+                "⚠️ *Person search usage:*\n"
+                "`/search @Full Name \\| job title \\| location`\n\n"
+                "_Example:_\n"
+                "`/search @Shannon Lee \\| dental hygienist \\| Auburn, Alabama`",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            return
+
         await _run_person_search(update, context, name, job_title, location)
         return
-
     # Regular search
     job_title = parts[0] if len(parts) > 0 else ""
     location  = parts[1] if len(parts) > 1 else ""
