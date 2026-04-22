@@ -105,3 +105,58 @@ async def execute_search(request: SearchRequest) -> SearchResult:
         )
 
     return result
+async def execute_person_search(request: SearchRequest) -> SearchResult:
+    """Search for a specific person by name + job title."""
+    result = SearchResult(request=request)
+
+    if sessions.is_searching(request.user_id):
+        result.error = "already_searching"
+        return result
+
+    allowed, reason = rate_limiter.check(request.user_id)
+    if not allowed:
+        result.error = f"rate_limited:{reason}"
+        return result
+
+    sessions.mark_searching(request.user_id)
+    rate_limiter.record(request.user_id)
+    client = get_client()
+
+    try:
+        raw_results, query_used = await run_person_search(
+            name=request.name,
+            job_title=request.job_title,
+            client=client,
+        )
+        result.query_used = query_used
+
+        if not raw_results:
+            result.error = "no_results"
+            return result
+
+        people = parse_organic_results(
+            organic_results=raw_results,
+            job_title=request.job_title,
+            location="",
+        )
+
+        if not people:
+            result.error = "parse_failed"
+            return result
+
+        result.people = people
+        await append_results(request.user_id, people)
+
+    except Exception as exc:
+        result.error = str(exc)
+        log.exception("Error during person search: {e}", e=exc)
+
+    finally:
+        sessions.record_search(
+            request.user_id,
+            request.job_title,
+            "",
+            len(result.people),
+        )
+
+    return result
