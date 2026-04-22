@@ -28,6 +28,7 @@ from formatters import (
 from config import settings
 from models import SearchRequest
 from search_service import execute_search
+from search_service import execute_search, execute_person_search
 from industries import INDUSTRY_LIST, is_valid_industry
 from logger import log
 from rate_limiter import rate_limiter
@@ -120,11 +121,6 @@ async def callback_industry_select(update: Update, context: ContextTypes.DEFAULT
 # ── /search ───────────────────────────────────────────────────────────────────
 
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Usage:
-        /search job title | location
-        /search job title | location | industry
-    """
     user = update.effective_user
     raw_args = " ".join(context.args).strip() if context.args else ""
 
@@ -132,26 +128,33 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(
             "⚠️ *Usage:*\n"
             "`/search job title \\| location`\n"
-            "`/search job title \\| location \\| industry`\n\n"
+            "`/search name \\| job title \\| location` \\(person lookup\\)\n\n"
             "_Examples:_\n"
             "`/search bookkeeper \\| Birmingham, Alabama`\n"
-            "`/search nurse \\| Texas \\| Healthcare`\n\n"
-            "Use /industries to browse available industry filters\\.",
+            "`/search John Smith \\| accountant \\| New York`",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
     parts = [p.strip() for p in raw_args.split("|")]
 
+    # Detect person search: 3 parts where first part looks like a name
+    # (no common job-title keywords, contains a space like "John Smith")
+    if len(parts) == 3 and " " in parts[0] and not any(
+        kw in parts[0].lower() for kw in ["engineer", "manager", "director", "analyst", "developer"]
+    ):
+        # Person search: name | job title | location
+        name, job_title, location = parts[0], parts[1], parts[2]
+        await _run_person_search(update, context, name, job_title, location)
+        return
+
+    # Regular search
     job_title = parts[0] if len(parts) > 0 else ""
     location  = parts[1] if len(parts) > 1 else ""
-
-    # Industry can come from inline arg OR previously saved in user_data
     inline_industry = parts[2] if len(parts) > 2 else None
     saved_industry  = context.user_data.get("industry")
     industry = inline_industry or saved_industry or None
 
-    # Validate inline industry if provided
     if inline_industry and not is_valid_industry(inline_industry):
         close = [i for i in INDUSTRY_LIST if inline_industry.lower() in i.lower()]
         suggestion = f"\n\nDid you mean: *{md2(close[0])}*?" if close else \
@@ -170,7 +173,6 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await _run_search(update, context, job_title, location, industry)
-
 
 # ── /repeat ───────────────────────────────────────────────────────────────────
 
@@ -365,3 +367,53 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             "❌ An unexpected error occurred\\. Please try again\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
+
+async def _run_person_search(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    name: str,
+    job_title: str,
+    location: str,
+) -> None:
+    user = update.effective_user
+    log.info("Person search — name:'{n}' job:'{j}' user:{u}", n=name, j=job_title, u=user.id)
+
+    try:
+        request = SearchRequest(
+            name=name,
+            job_title=job_title,
+            location=location,
+            user_id=user.id,
+            chat_id=update.effective_chat.id,
+        )
+    except Exception as exc:
+        await update.message.reply_text(
+            f"⚠️ Invalid input: {md2(str(exc))}",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    status_msg = await update.message.reply_text(
+        f"🔍 Searching for *{md2(name)}* \\— *{md2(job_title)}*\\.\\.\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+    search_result = await execute_person_search(request)
+
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
+
+    if search_result.error == "already_searching":
+        await update.message.reply_text("⏳ A search is already running\\. Please wait\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        return
+
+    if search_result.error and search_result.error.startswith("rate_limited:"):
+        reason = search_result.error.split(":", 1)[1]
+        await update.message.reply_text(f"🚦 *Rate limit reached*\n\n{md2(reason)}", parse_mode=ParseMode.MARKDOWN_V2)
+        return
+
+    messages = format_search_results(search_result)
+    for msg in messages:
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2, disable_web_page_preview=True)
