@@ -22,7 +22,7 @@ from config import settings
 from industries import build_industry_query_fragment
 from logger import log
 from synonyms import expand_location, get_synonyms
-from search_service import run_person_search  # only if needed cross-file
+
 
 # ── Query builders ────────────────────────────────────────────────────────────
 
