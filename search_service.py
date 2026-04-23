@@ -13,7 +13,7 @@ This is the single import needed by the bot layer.
 
 from models import Person, SearchRequest, SearchResult
 from linkedin_parser import parse_organic_results
-from xray_scraper import create_client, run_xray_search
+from xray_scraper import SerpAPIClient, run_xray_search
 from logger import log
 from rate_limiter import rate_limiter
 from session import sessions
