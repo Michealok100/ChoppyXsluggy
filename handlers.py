@@ -57,7 +57,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_industries(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show all available industries as a tappable inline keyboard."""
 
-    # Build rows of 2 buttons each
     buttons = []
     row = []
     for i, industry in enumerate(INDUSTRY_LIST):
@@ -73,7 +72,6 @@ async def cmd_industries(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if row:
         buttons.append(row)
 
-    # Add a "No filter" button at the bottom
     buttons.append([
         InlineKeyboardButton("❌ No industry filter", callback_data="industry_select:none")
     ])
@@ -94,9 +92,8 @@ async def callback_industry_select(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
 
-    data = query.data  # e.g. "industry_select:Healthcare"
+    data = query.data
     industry = data.split(":", 1)[1]
-
     user_id = query.from_user.id
 
     if industry == "none":
@@ -124,7 +121,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     raw_args = " ".join(context.args).strip() if context.args else ""
 
     if not raw_args or "|" not in raw_args:
-      await update.message.reply_text(
+        await update.message.reply_text(
             "⚠️ *Usage:*\n"
             "`/search job title \\| location`\n"
             "`/search job title \\| location \\| industry`\n"
@@ -138,7 +135,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     parts = [p.strip() for p in raw_args.split("|")]
 
- # Detect person search: first part starts with @
+    # Detect person search: first part starts with @
     if parts[0].startswith("@"):
         name = parts[0][1:].strip()
         job_title = parts[1] if len(parts) > 1 else ""
@@ -156,6 +153,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         await _run_person_search(update, context, name, job_title, location)
         return
+
     # Regular search
     job_title = parts[0] if len(parts) > 0 else ""
     location  = parts[1] if len(parts) > 1 else ""
@@ -166,7 +164,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if inline_industry and not is_valid_industry(inline_industry):
         close = [i for i in INDUSTRY_LIST if inline_industry.lower() in i.lower()]
         suggestion = f"\n\nDid you mean: *{md2(close[0])}*?" if close else \
-                     f"\n\nUse /industries to see all options\\."
+                     "\n\nUse /industries to see all options\\."
         await update.message.reply_text(
             f"⚠️ Unknown industry: *{md2(inline_industry)}*{suggestion}",
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -181,6 +179,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await _run_search(update, context, job_title, location, industry)
+
 
 # ── /repeat ───────────────────────────────────────────────────────────────────
 
@@ -352,29 +351,7 @@ async def _run_search(
         )
 
 
-# ── Fallback ──────────────────────────────────────────────────────────────────
-
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text or ""
-    if "|" in text:
-        await update.message.reply_text(
-            f"💡 Did you mean: `/search {md2(text)}`?",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-    else:
-        await update.message.reply_text(
-            "ℹ️ Use /help to see available commands\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    log.exception("Unhandled exception: {e}", e=context.error)
-    if isinstance(update, Update) and update.effective_message:
-        await update.effective_message.reply_text(
-            "❌ An unexpected error occurred\\. Please try again\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
+# ── Person search runner ──────────────────────────────────────────────────────
 
 async def _run_person_search(
     update: Update,
@@ -414,14 +391,49 @@ async def _run_person_search(
         pass
 
     if search_result.error == "already_searching":
-        await update.message.reply_text("⏳ A search is already running\\. Please wait\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        await update.message.reply_text(
+            "⏳ A search is already running\\. Please wait\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
         return
 
     if search_result.error and search_result.error.startswith("rate_limited:"):
         reason = search_result.error.split(":", 1)[1]
-        await update.message.reply_text(f"🚦 *Rate limit reached*\n\n{md2(reason)}", parse_mode=ParseMode.MARKDOWN_V2)
+        await update.message.reply_text(
+            f"🚦 *Rate limit reached*\n\n{md2(reason)}",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
         return
 
     messages = format_search_results(search_result)
     for msg in messages:
-        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2, disable_web_page_preview=True)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+
+
+# ── Fallback ──────────────────────────────────────────────────────────────────
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text or ""
+    if "|" in text:
+        await update.message.reply_text(
+            f"💡 Did you mean: `/search {md2(text)}`?",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+    else:
+        await update.message.reply_text(
+            "ℹ️ Use /help to see available commands\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log.exception("Unhandled exception: {e}", e=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        await update.effective_message.reply_text(
+            "❌ An unexpected error occurred\\. Please try again\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
