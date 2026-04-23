@@ -1,47 +1,33 @@
 """
 scraper/search_service.py — High-level search service.
-
-Glues together:
-  1. xray_scraper    — builds queries + fires SerpAPI requests
-  2. linkedin_parser — converts raw results into Person objects
-  3. storage         — persists results to CSV
-  4. rate_limiter    — enforces per-user request quotas
-  5. session         — tracks in-flight searches and history
-
-This is the single import needed by the bot layer.
 """
 
 from models import Person, SearchRequest, SearchResult
 from linkedin_parser import parse_organic_results
-from xray_scraper import SerpAPIClient, run_xray_search
+from xray_scraper import SerpAPIClient, build_fallback_queries, build_xray_query
 from logger import log
 from rate_limiter import rate_limiter
 from session import sessions
 from storage import append_results
-from storage import append_results
+from config import settings
+
+
+def get_client() -> SerpAPIClient:
+    return SerpAPIClient(api_key=settings.SERPAPI_KEY)
 
 
 async def execute_search(request: SearchRequest) -> SearchResult:
-    """
-    Run a full talent search and return a SearchResult.
-
-    Checks rate limits and concurrent-search guards before executing.
-    Guarantees no unhandled exceptions escape to the bot layer.
-    """
     result = SearchResult(request=request)
 
-    # ── Guard: already searching ──────────────────────────────────────────────
     if sessions.is_searching(request.user_id):
         result.error = "already_searching"
         return result
 
-    # ── Guard: rate limit ─────────────────────────────────────────────────────
     allowed, reason = rate_limiter.check(request.user_id)
     if not allowed:
         result.error = f"rate_limited:{reason}"
         return result
 
-    # ── Mark in-flight ────────────────────────────────────────────────────────
     sessions.mark_searching(request.user_id)
     rate_limiter.record(request.user_id)
     client = get_client()
@@ -54,12 +40,17 @@ async def execute_search(request: SearchRequest) -> SearchResult:
             u=request.user_id,
         )
 
-        # ── 1. Run X-ray search with fallback ─────────────────────────────────
-        raw_results, query_used, fallback_level = await run_xray_search(
-            job_title=request.job_title,
-            location=request.location,
-            client=client,
-        )
+        # Run fallback queries until we get results
+        raw_results = []
+        query_used = ""
+        fallback_level = 0
+
+        for query, level in build_fallback_queries(request.job_title, request.location):
+            raw_results = await client.search(query, pages=1)
+            query_used = query
+            fallback_level = level
+            if raw_results:
+                break
 
         result.query_used = query_used
         result.fallback_level = fallback_level
@@ -69,7 +60,6 @@ async def execute_search(request: SearchRequest) -> SearchResult:
             log.warning("No results after all fallbacks for '{j}'", j=request.job_title)
             return result
 
-        # ── 2. Parse into Person objects ──────────────────────────────────────
         people: list[Person] = parse_organic_results(
             organic_results=raw_results,
             job_title=request.job_title,
@@ -88,7 +78,6 @@ async def execute_search(request: SearchRequest) -> SearchResult:
             l=fallback_level,
         )
 
-        # ── 3. Persist to CSV ─────────────────────────────────────────────────
         await append_results(request.user_id, people)
 
     except Exception as exc:
@@ -96,7 +85,6 @@ async def execute_search(request: SearchRequest) -> SearchResult:
         log.exception("Unexpected error during search: {e}", e=exc)
 
     finally:
-        # Always clear the in-flight flag and record history
         sessions.record_search(
             request.user_id,
             request.job_title,
@@ -105,8 +93,9 @@ async def execute_search(request: SearchRequest) -> SearchResult:
         )
 
     return result
+
+
 async def execute_person_search(request: SearchRequest) -> SearchResult:
-    """Search for a specific person by name + job title."""
     result = SearchResult(request=request)
 
     if sessions.is_searching(request.user_id):
@@ -123,11 +112,11 @@ async def execute_person_search(request: SearchRequest) -> SearchResult:
     client = get_client()
 
     try:
-        raw_results, query_used = await run_person_search(
-            name=request.name,
-            job_title=request.job_title,
-            client=client,
-        )
+        # Build a person-specific query: name + title on LinkedIn
+        query = f'site:linkedin.com/in "{request.name}" "{request.job_title}"'
+        raw_results = await client.search(query, pages=1)
+        query_used = query
+
         result.query_used = query_used
 
         if not raw_results:
