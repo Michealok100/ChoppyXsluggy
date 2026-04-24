@@ -124,13 +124,18 @@ class SerpAPIClient:
 
         for page in range(pages):
             start = page * 10
+            data = None
             try:
                 data = await self._fetch_page(query, start)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 429:
                     log.warning("SerpAPI rate limit hit — waiting 30s")
                     await asyncio.sleep(30)
-                    data = await self._fetch_page(query, start)
+                    try:
+                        data = await self._fetch_page(query, start)
+                    except Exception as retry_exc:
+                        log.error("SerpAPI retry failed: {e}", e=retry_exc)
+                        break
                 else:
                     log.error("SerpAPI HTTP error: {e}", e=exc)
                     break
@@ -138,4 +143,86 @@ class SerpAPIClient:
                 log.error("SerpAPI request failed: {e}", e=exc)
                 break
 
+            if data is None:
+                break
+
             organic = data.get("organic_results", [])
+            if not organic:
+                log.info("No organic results on page {p}", p=page + 1)
+                break
+
+            all_results.extend(organic)
+            log.info("Page {p}: got {n} results", p=page + 1, n=len(organic))
+
+            if page < pages - 1:
+                await asyncio.sleep(settings.REQUEST_DELAY)
+
+        return all_results
+
+
+# ── High-level search orchestrator ────────────────────────────────────────────
+
+async def run_xray_search(
+    job_title: str,
+    location: str,
+    client,
+    max_results: int = 15,
+    industry: Optional[str] = None,
+) -> tuple[list[dict], str, int]:
+    candidate_queries = build_fallback_queries(job_title, location, industry=industry)
+
+    for query, level in candidate_queries:
+        if not query.strip():
+            continue
+
+        log.info("Trying fallback level {l}: {q}", l=level, q=query[:100])
+        raw_results = await client.search(query, pages=settings.SEARCH_PAGES)
+
+        if raw_results:
+            return raw_results[:max_results], query, level
+
+        log.info("No results at level {l}, escalating...", l=level)
+        await asyncio.sleep(settings.REQUEST_DELAY)
+
+    return [], "", 5
+
+
+# ── Module-level singleton ────────────────────────────────────────────────────
+
+_serpapi_client = None
+
+
+def get_client():
+    global _serpapi_client
+    if _serpapi_client is None:
+        if settings.SERPAPI_KEY.upper() == "MOCK":
+            from mock_client import MockSerpAPIClient
+            log.warning("Using MOCK SerpAPI client.")
+            _serpapi_client = MockSerpAPIClient()
+        else:
+            _serpapi_client = SerpAPIClient(settings.SERPAPI_KEY)
+    return _serpapi_client
+
+
+async def run_person_search(
+    name: str,
+    job_title: str,
+    client,
+) -> tuple[list[dict], str]:
+    """X-ray search for a specific person by name + job title."""
+    query = f'site:linkedin.com/in "{name}" "{job_title}"'
+    log.info("Person search query: {q}", q=query)
+    raw_results = await client.search(query)
+    return raw_results, query
+
+
+async def run_domain_search(
+    domain: str,
+    client,
+) -> tuple[list[dict], str]:
+    """X-ray search for all employees at a company by domain."""
+    company = domain.replace("www.", "").split(".")[0]
+    query = f'site:linkedin.com/in "{domain}" OR "{company}"'
+    log.info("Domain search query: {q}", q=query)
+    raw_results = await client.search(query)
+    return raw_results, query
