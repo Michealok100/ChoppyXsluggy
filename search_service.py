@@ -45,12 +45,16 @@ async def execute_search(request: SearchRequest) -> SearchResult:
         query_used = ""
         fallback_level = 0
 
-        for query, level in build_fallback_queries(request.job_title, request.location):
+      for query, level in build_fallback_queries(request.job_title, request.location):
+            log.info("Trying query level {l}: {q}", l=level, q=query)
             raw_results = await client.search(query, pages=1)
+            log.info("Raw results count: {n}", n=len(raw_results))
             query_used = query
             fallback_level = level
             if raw_results:
                 break
+
+        result.query_used = query_used
 
         result.query_used = query_used
         result.fallback_level = fallback_level
