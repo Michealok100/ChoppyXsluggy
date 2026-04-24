@@ -40,12 +40,11 @@ async def execute_search(request: SearchRequest) -> SearchResult:
             u=request.user_id,
         )
 
-        # Run fallback queries until we get results
         raw_results = []
         query_used = ""
         fallback_level = 0
 
-      for query, level in build_fallback_queries(request.job_title, request.location):
+        for query, level in build_fallback_queries(request.job_title, request.location):
             log.info("Trying query level {l}: {q}", l=level, q=query)
             raw_results = await client.search(query, pages=1)
             log.info("Raw results count: {n}", n=len(raw_results))
@@ -53,8 +52,6 @@ async def execute_search(request: SearchRequest) -> SearchResult:
             fallback_level = level
             if raw_results:
                 break
-
-        result.query_used = query_used
 
         result.query_used = query_used
         result.fallback_level = fallback_level
@@ -116,12 +113,11 @@ async def execute_person_search(request: SearchRequest) -> SearchResult:
     client = get_client()
 
     try:
-        # Build a person-specific query: name + title on LinkedIn
         query = f'site:linkedin.com/in "{request.name}" "{request.job_title}"'
+        log.info("Person search query: {q}", q=query)
         raw_results = await client.search(query, pages=1)
-        query_used = query
-
-        result.query_used = query_used
+        log.info("Person search raw results count: {n}", n=len(raw_results))
+        result.query_used = query
 
         if not raw_results:
             result.error = "no_results"
