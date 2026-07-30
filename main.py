@@ -7,6 +7,7 @@ from __future__ import annotations
 import sys
 import os
 import asyncio
+import threading
 from pathlib import Path
 from flask import Flask, request
 
@@ -39,6 +40,7 @@ flask_app = Flask(__name__)
 
 # Global telegram app
 tg_app = None
+loop = None
 
 
 async def post_init(application: Application) -> None:
@@ -91,13 +93,17 @@ def build_application() -> Application:
 
 
 @flask_app.route('/webhook', methods=['POST'])
-async def webhook_handler():
+def webhook_handler():
     """Handle incoming Telegram updates via webhook"""
     try:
         data = request.get_json()
-        if data:
+        if data and tg_app:
             update = Update.de_json(data, tg_app.bot)
-            await tg_app.process_update(update)
+            # Run the async function in the event loop
+            asyncio.run_coroutine_threadsafe(
+                tg_app.process_update(update), 
+                loop
+            )
         return 'ok', 200
     except Exception as e:
         log.error(f"Webhook error: {e}")
@@ -110,26 +116,31 @@ def health_check():
     return 'Bot is running', 200
 
 
-async def start_bot():
-    """Start the Telegram bot"""
-    global tg_app
+def run_bot():
+    """Run the Telegram bot in a separate thread"""
+    global tg_app, loop
     
-    settings.validate()
-    log.info("Starting LinkedIn X-ray Bot…")
-    
-    tg_app = build_application()
-    
-    async with tg_app:
-        await tg_app.start()
+    try:
+        settings.validate()
+        log.info("Starting LinkedIn X-ray Bot…")
+        
+        tg_app = build_application()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Start the bot
         log.info("Bot started successfully.")
+        loop.run_until_complete(tg_app.initialize())
+        loop.run_until_complete(tg_app.post_init(tg_app))
         
         # Keep bot running
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            log.info("Shutting down bot...")
-            await tg_app.stop()
+        while True:
+            loop.run_until_complete(asyncio.sleep(0.1))
+            
+    except KeyboardInterrupt:
+        log.info("Shutting down bot...")
+    except Exception as e:
+        log.error(f"Bot error: {e}")
 
 
 def main() -> None:
@@ -141,16 +152,19 @@ def main() -> None:
     webhook_url = os.getenv('WEBHOOK_URL')
     port = int(os.getenv('PORT', 10000))
     
-    # Start bot in background task
-    bot_task = asyncio.create_task(start_bot())
-    
-    # Start Flask server
     log.info(f"Starting Flask server on port {port}...")
     if webhook_url:
         log.info(f"Webhook mode enabled: {webhook_url}")
-    else:
-        log.warning("WEBHOOK_URL not set, webhook mode may not work properly")
     
+    # Start bot in background thread
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Give bot time to initialize
+    import time
+    time.sleep(2)
+    
+    # Start Flask server on main thread
     flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 
