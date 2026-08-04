@@ -3,6 +3,7 @@ bot/handlers.py — Telegram command handlers.
 
 Commands:
   /search   — search with optional industry filter
+  /company  — search for employees at a company
   /industry — browse/set industry filter interactively
   /repeat   — re-run last search
   /history  — recent searches
@@ -364,6 +365,17 @@ async def _run_person_search(
     user = update.effective_user
     log.info("Person search — name:'{n}' job:'{j}' user:{u}", n=name, j=job_title, u=user.id)
 
+    # Validate that location is provided for person search
+    if not location or not location.strip():
+        await update.message.reply_text(
+            "⚠️ *Person search requires location*\n\n"
+            "Usage: `/search @Full Name \\| job title \\| location`\n\n"
+            "_Example:_\n"
+            "`/search @Shannon Lee \\| dental hygienist \\| Auburn, Alabama`",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
     try:
         request = SearchRequest(
             name=name,
@@ -464,8 +476,8 @@ async def _run_company_search(
 
     try:
         request = SearchRequest(
-            job_title=company_name,  # Use as fallback if URL resolution fails
-            location="",
+            job_title=company_name,  # Company name stored in job_title field
+            location="",  # ✅ FIXED: Empty location is now allowed
             company_url=company_url,
             user_id=user.id,
             chat_id=update.effective_chat.id,
