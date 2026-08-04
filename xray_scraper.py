@@ -79,6 +79,40 @@ def build_fallback_queries(
     return queries
 
 
+def build_company_xray_queries(company_name: str) -> list[tuple[str, int]]:
+    """Build progressive company X-ray queries.
+    
+    Level 0: site:linkedin.com/in "COMPANY_NAME"
+    Level 1: site:linkedin.com/in "COMPANY_NAME" employee
+    Level 2: site:linkedin.com/in "COMPANY_NAME" manager
+    Level 3: site:linkedin.com/in "COMPANY_NAME" director
+    """
+    if not company_name or not company_name.strip():
+        return []
+    
+    company_name = company_name.strip()
+    queries: list[tuple[str, int]] = []
+    
+    # Level 0: base query
+    base_query = f'site:linkedin.com/in "{company_name}"'
+    queries.append((base_query, 0))
+    
+    # Level 1: with employee keyword
+    employee_query = f'site:linkedin.com/in "{company_name}" employee'
+    queries.append((employee_query, 1))
+    
+    # Level 2: with manager keyword
+    manager_query = f'site:linkedin.com/in "{company_name}" manager'
+    queries.append((manager_query, 2))
+    
+    # Level 3: with director/executive keywords
+    director_query = f'site:linkedin.com/in "{company_name}" (director OR executive OR founder OR ceo)'
+    queries.append((director_query, 3))
+    
+    log.debug("Built {n} company queries for '{c}'", n=len(queries), c=company_name)
+    return queries
+
+
 # ── SerpAPI client ────────────────────────────────────────────────────────────
 
 class SerpAPIClient:
