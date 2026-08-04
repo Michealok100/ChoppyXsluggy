@@ -19,6 +19,7 @@ class Person(BaseModel):
     linkedin_url: str
     snippet: Optional[str] = None
     relevance_score: float = 0.0
+    confidence: str = "MEDIUM"  # HIGH, MEDIUM, LOW
     timestamp: datetime = None
 
     def __init__(self, **data):
@@ -35,8 +36,14 @@ class Person(BaseModel):
         return v
 
     def as_telegram_block(self, index: int) -> str:
+        confidence_emoji = {
+            "HIGH": "✅",
+            "MEDIUM": "🔵",
+            "LOW": "⚠️",
+        }.get(self.confidence, "❓")
+        
         return (
-            f"*{index}.* 👤 *{self.name}*\n"
+            f"*{index}.* 👤 *{self.name}* {confidence_emoji}\n"
             f"   💼 {self.title}\n"
             f"   🏢 {self.company}\n"
             f"   🔗 {self.linkedin_url}\n"
@@ -48,8 +55,18 @@ class Person(BaseModel):
             "title": self.title,
             "company": self.company,
             "linkedin_url": self.linkedin_url,
+            "confidence": self.confidence,
             "timestamp": self.timestamp.isoformat(),
         }
+
+
+class CompanyInfo(BaseModel):
+    """Extracted company information from URL or domain."""
+    company_name: str
+    website: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    domain: Optional[str] = None
+    source: str = "unknown"  # "linkedin", "domain", "manual"
 
 
 class SearchRequest(BaseModel):
@@ -57,7 +74,8 @@ class SearchRequest(BaseModel):
     name: str | None = None 
     job_title: str
     location: str
-    industry: Optional[str] = None          # ← NEW: optional industry filter
+    industry: Optional[str] = None          # ← optional industry filter
+    company_url: Optional[str] = None       # ← NEW: for company search
     user_id: int
     chat_id: int
 
@@ -72,6 +90,14 @@ class SearchRequest(BaseModel):
     @field_validator("industry")
     @classmethod
     def clean_industry(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        return v if v else None
+    
+    @field_validator("company_url")
+    @classmethod
+    def clean_company_url(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
         v = v.strip()
