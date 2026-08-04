@@ -16,19 +16,23 @@ sys.path.insert(0, str(Path(__file__).parent))
 from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
 )
 from handlers import (
     cmd_clear,
+    cmd_company,
     cmd_export,
     cmd_help,
     cmd_history,
+    cmd_industries,
     cmd_repeat,
     cmd_search,
     cmd_start,
     cmd_status,
+    callback_industry_select,
     error_handler,
     handle_text,
 )
@@ -47,13 +51,15 @@ async def post_init(application: Application) -> None:
     """Register the bot's command menu visible in Telegram clients."""
     await application.bot.set_my_commands(
         [
-            BotCommand("search",  "Search professionals by role & location"),
-            BotCommand("repeat",  "Re-run your last search"),
-            BotCommand("history", "Show your recent searches"),
-            BotCommand("status",  "Check your usage & rate limits"),
-            BotCommand("export",  "Download results as CSV"),
-            BotCommand("clear",   "Delete your saved results"),
-            BotCommand("help",    "Show usage instructions"),
+            BotCommand("search",     "Search professionals by role & location"),
+            BotCommand("company",    "Find employees at a company"),
+            BotCommand("industries", "Browse and select industry filter"),
+            BotCommand("repeat",     "Re-run your last search"),
+            BotCommand("history",    "Show your recent searches"),
+            BotCommand("status",     "Check your usage & rate limits"),
+            BotCommand("export",     "Download results as CSV"),
+            BotCommand("clear",      "Delete your saved results"),
+            BotCommand("help",       "Show usage instructions"),
         ]
     )
     log.info("Bot command menu registered.")
@@ -79,14 +85,20 @@ def build_application() -> Application:
         .post_stop(post_stop)
         .build()
     )
-    app.add_handler(CommandHandler("start",   cmd_start))
-    app.add_handler(CommandHandler("help",    cmd_help))
-    app.add_handler(CommandHandler("search",  cmd_search))
-    app.add_handler(CommandHandler("repeat",  cmd_repeat))
-    app.add_handler(CommandHandler("history", cmd_history))
-    app.add_handler(CommandHandler("status",  cmd_status))
-    app.add_handler(CommandHandler("export",  cmd_export))
-    app.add_handler(CommandHandler("clear",   cmd_clear))
+    app.add_handler(CommandHandler("start",      cmd_start))
+    app.add_handler(CommandHandler("help",       cmd_help))
+    app.add_handler(CommandHandler("search",     cmd_search))
+    app.add_handler(CommandHandler("company",    cmd_company))
+    app.add_handler(CommandHandler("industries", cmd_industries))
+    app.add_handler(CommandHandler("repeat",     cmd_repeat))
+    app.add_handler(CommandHandler("history",    cmd_history))
+    app.add_handler(CommandHandler("status",     cmd_status))
+    app.add_handler(CommandHandler("export",     cmd_export))
+    app.add_handler(CommandHandler("clear",      cmd_clear))
+    
+    # Callback handler for industry selection
+    app.add_handler(CallbackQueryHandler(callback_industry_select, pattern="^industry_select:"))
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
     return app
