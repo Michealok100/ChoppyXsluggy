@@ -23,11 +23,12 @@ from formatters import (
     SEARCHING_TEXT,
     format_industry_list,
     format_search_results,
+    format_company_results,
     md2,
 )
 from config import settings
 from models import SearchRequest
-from search_service import execute_search, execute_person_search
+from search_service import execute_search, execute_person_search, execute_company_search
 from industries import INDUSTRY_LIST, is_valid_industry
 from logger import log
 from rate_limiter import rate_limiter
@@ -406,6 +407,104 @@ async def _run_person_search(
         return
 
     messages = format_search_results(search_result)
+    for msg in messages:
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+
+
+# ── /company ─────────────────────────────────────────────────────────────────
+
+async def cmd_company(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Search for employees at a company by name or LinkedIn company URL."""
+    user = update.effective_user
+    raw_args = " ".join(context.args).strip() if context.args else ""
+
+    if not raw_args:
+        await update.message.reply_text(
+            "⚠️ *Usage:*\n"
+            "`/company Company Name`\n"
+            "`/company https://www.linkedin.com/company/acme-corp`\n\n"
+            "_Examples:_\n"
+            "`/company Google`\n"
+            "`/company https://www.linkedin.com/company/anthropic`",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    # Check if it's a URL or just a company name
+    company_url = None
+    company_name = raw_args
+
+    if raw_args.startswith("http"):
+        company_url = raw_args
+    else:
+        company_name = raw_args
+
+    await _run_company_search(update, context, company_name, company_url)
+
+
+# ── Company search runner ─────────────────────────────────────────────────────
+
+async def _run_company_search(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    company_name: str,
+    company_url: str | None = None,
+) -> None:
+    user = update.effective_user
+    log.info(
+        "Company search — name:'{c}' url:'{u}' user:{id}",
+        c=company_name,
+        u=company_url or "none",
+        id=user.id,
+    )
+
+    try:
+        request = SearchRequest(
+            job_title=company_name,  # Use as fallback if URL resolution fails
+            location="",
+            company_url=company_url,
+            user_id=user.id,
+            chat_id=update.effective_chat.id,
+        )
+    except Exception as exc:
+        await update.message.reply_text(
+            f"⚠️ Invalid input: {md2(str(exc))}",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    status_msg = await update.message.reply_text(
+        f"🔍 Searching employees at *{md2(company_name)}*\\.\\.\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+    search_result = await execute_company_search(request)
+
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
+
+    if search_result.error == "already_searching":
+        await update.message.reply_text(
+            "⏳ A search is already running\\. Please wait\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    if search_result.error and search_result.error.startswith("rate_limited:"):
+        reason = search_result.error.split(":", 1)[1]
+        await update.message.reply_text(
+            f"🚦 *Rate limit reached*\n\n{md2(reason)}",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    messages = format_company_results(search_result)
     for msg in messages:
         await update.message.reply_text(
             msg,
