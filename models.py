@@ -140,21 +140,34 @@ class CompanyInfo(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    """Validated user search request."""
+    """Validated user search request.
+    
+    For person search: name, job_title, and location required.
+    For company search: job_title (company name) and company_url.
+    Location is optional to support both search types.
+    """
     name: str | None = None 
     job_title: str
-    location: str
+    location: str = ""  # Allow empty for company searches
     industry: Optional[str] = None          # ← optional industry filter
     company_url: Optional[str] = None       # ← for company search
     user_id: int
     chat_id: int
 
-    @field_validator("job_title", "location")
+    @field_validator("job_title")
     @classmethod
-    def not_empty(cls, v: str) -> str:
+    def job_title_not_empty(cls, v: str) -> str:
         v = v.strip()
         if not v:
-            raise ValueError("Field must not be empty.")
+            raise ValueError("Job title must not be empty.")
+        return v
+
+    @field_validator("location")
+    @classmethod
+    def clean_location(cls, v: str) -> str:
+        if not v:
+            return ""  # Allow empty for company searches
+        v = v.strip()
         return v
 
     @field_validator("industry")
@@ -185,6 +198,10 @@ class SearchResult(BaseModel):
     @property
     def found(self) -> bool:
         return len(self.people) > 0
+    
+    def validate_person_search(self) -> bool:
+        """Check if location is provided (required for person searches)."""
+        return bool(self.request.location and self.request.location.strip())
 
 
 class CompanySearchResult(BaseModel):
