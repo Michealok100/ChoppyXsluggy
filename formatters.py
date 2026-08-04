@@ -19,8 +19,14 @@ def md2(text: str) -> str:
 
 
 def format_person(person: Person, index: int) -> str:
+    confidence_emoji = {
+        "HIGH": "✅",
+        "MEDIUM": "🔵",
+        "LOW": "⚠️",
+    }.get(getattr(person, 'confidence', 'MEDIUM'), "❓")
+    
     return (
-        f"*{index}\\.* 👤 *{md2(person.name)}*\n"
+        f"*{index}\\.* 👤 *{md2(person.name)}* {confidence_emoji}\n"
         f"   💼 {md2(person.title)}\n"
         f"   🏢 {md2(person.company)}\n"
         f"   🔗 [LinkedIn Profile]({person.linkedin_url})\n"
@@ -76,6 +82,62 @@ def format_search_results(result: SearchResult) -> list[str]:
     return messages
 
 
+def format_company_results(result: SearchResult) -> list[str]:
+    """Format company search results with company info header."""
+    if not result.found:
+        return [_format_no_company_results(result)]
+
+    messages: list[str] = []
+    company_name = md2(result.request.job_title)
+    count = len(result.people)
+
+    # Fallback note
+    fallback_note = {
+        0: "",
+        1: "\n_\\(searched for employees keyword\\)_",
+        2: "\n_\\(searched for manager keyword\\)_",
+        3: "\n_\\(searched for director/executive keywords\\)_",
+    }.get(result.fallback_level, "")
+
+    header = (
+        f"🏢 *Company Search Results*\n"
+        f"🎯 *Company:* {company_name}\n"
+        f"👥 *Found:* {count} professionals{fallback_note}\n"
+        f"{'─' * 30}\n"
+    )
+
+    current_msg = header
+
+    for i, person in enumerate(result.people, start=1):
+        block = format_person(person, i)
+        if len(current_msg) + len(block) > 3800:
+            messages.append(current_msg)
+            current_msg = ""
+        current_msg += block + "\n"
+
+    if current_msg.strip():
+        messages.append(current_msg)
+
+    messages[-1] += (
+        "\n📥 Use /export to download results as CSV\\.\n"
+        "🔍 Use /search to find specific roles\\."
+    )
+    return messages
+
+
+def _format_no_company_results(result: SearchResult) -> str:
+    """Format no results message for company search."""
+    company_name = md2(result.request.job_title)
+    return (
+        f"😕 *No results found*\n\n"
+        f"Searched for employees at *{company_name}*\\.\n\n"
+        f"💡 *Suggestions:*\n"
+        f"  • Try a different company name\n"
+        f"  • Use a LinkedIn company URL directly\n"
+        f"  • Use /search to find specific roles instead"
+    )
+
+
 def _format_no_results(result: SearchResult) -> str:
     job      = md2(result.request.job_title)
     loc      = md2(result.request.location)
@@ -115,7 +177,7 @@ def format_industry_list() -> str:
 
 HELP_TEXT = """
 🤖 *LinkedIn X\\-Ray Search Bot*
-_Find professionals by role, location \\& industry_
+_Find professionals by role, location, company \\& industry_
 
 ━━━━━━━━━━━━━━━━━━━━━
 *Commands*
@@ -123,12 +185,20 @@ _Find professionals by role, location \\& industry_
 
 🔍 */search* `job title | location`
 🔍 */search* `job title | location | industry`
-_Search LinkedIn for professionals\\._
+_Search LinkedIn for professionals by role\\._
 
 Examples:
 `/search bookkeeper | Birmingham, Alabama`
 `/search nurse | Texas | Healthcare`
 `/search software engineer | Austin, TX | Technology`
+
+🏢 */company* `Company Name`
+🏢 */company* `https://linkedin.com/company/...`
+_Search for employees at a specific company\\._
+
+Examples:
+`/company Google`
+`/company https://www.linkedin.com/company/anthropic`
 
 🏭 */industries*
 Browse and select an industry filter interactively\\.
@@ -142,11 +212,12 @@ Your selection is saved for all future searches\\.
 ❓ */help* — Show this message
 
 ━━━━━━━━━━━━━━━━━━━━━
-*Industry filter*
+*Features*
 ━━━━━━━━━━━━━━━━━━━━━
-Add an industry to narrow results to a specific sector\\.
-Run /industries to see all 25\\+ options\\.
-If no results found, the bot auto\\-retries without the filter\\.
+✅ Confidence scoring \\(HIGH/MEDIUM/LOW\\)
+🏭 Industry filtering on role searches
+📥 CSV export for all results
+🔄 Search history tracking
 """.strip()
 
 SEARCHING_TEXT = "🔍 Searching LinkedIn… This may take 10\\-20 seconds\\."
