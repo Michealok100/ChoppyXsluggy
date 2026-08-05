@@ -2,24 +2,26 @@
 scraper/search_service.py — High-level search service.
 """
 
+import re
+from urllib.parse import urlparse
+
 from models import Person, SearchRequest, SearchResult, CompanyInfo
 from linkedin_parser import parse_organic_results
 from xray_scraper import (
-    SerpAPIClient, 
-    build_fallback_queries, 
-    build_xray_query, 
+    SerpAPIClient,
+    build_fallback_queries,
+    build_xray_query,
     build_company_xray_queries,
+    run_company_search,
+    _extract_company_slug,
+    get_client,
 )
 from logger import log
 from rate_limiter import rate_limiter
 from session import sessions
 from storage import append_results
 from config import settings
-from company_resolver import extract_company_from_url
-
-
-def get_client() -> SerpAPIClient:
-    return SerpAPIClient(api_key=settings.SERPAPI_KEY)
+from company_resolver import extract_company_from_url, resolve_company_name_to_linkedin
 
 
 async def execute_search(request: SearchRequest) -> SearchResult:
@@ -158,7 +160,16 @@ async def execute_person_search(request: SearchRequest) -> SearchResult:
 
 
 async def execute_company_search(request: SearchRequest) -> SearchResult:
-    """Search for employees at a company by name/URL."""
+    """
+    Search for employees at a company by name/URL.
+    
+    Process:
+    1. Resolve company from URL or company name
+    2. Extract LinkedIn company slug
+    3. Run progressive company search with URL-based queries
+    4. Validate results match target company
+    5. Score confidence based on query level
+    """
     result = SearchResult(request=request)
 
     if sessions.is_searching(request.user_id):
@@ -175,56 +186,81 @@ async def execute_company_search(request: SearchRequest) -> SearchResult:
     client = get_client()
 
     try:
-        # Resolve company from URL or use job_title as company name
-        company_name = request.job_title
-        company_info = None
+        # Step 1: Resolve company information
+        company_name = request.job_title  # Fallback
+        company_url = request.company_url
+        company_slug = None
         
+        # If company URL provided, extract info and slug
         if request.company_url:
+            log.info("Resolving company from URL: {u}", u=request.company_url)
             company_info = extract_company_from_url(request.company_url)
-            if company_info:
-                company_name = company_info.company_name
-                log.info(
-                    "Resolved company '{c}' from URL '{u}'",
-                    c=company_name,
-                    u=request.company_url,
-                )
-            else:
+            
+            if not company_info:
                 result.error = "invalid_company_url"
+                log.warning("Could not parse company URL: {u}", u=request.company_url)
                 return result
-
-        # Build progressive company queries
-        company_queries = build_company_xray_queries(company_name)
-        if not company_queries:
-            result.error = "no_queries"
+            
+            company_name = company_info.company_name
+            company_url = company_info.linkedin_url or request.company_url
+            
+            # Extract slug from LinkedIn URL
+            if company_info.linkedin_url:
+                company_slug = _extract_company_slug(company_info.linkedin_url)
+        
+        # Step 2: If no slug yet, try to resolve company name to LinkedIn URL
+        if not company_slug and company_name:
+            log.info("Resolving company name to LinkedIn URL: {c}", c=company_name)
+            resolved_url = await resolve_company_name_to_linkedin(company_name)
+            
+            if resolved_url:
+                log.info("Resolved '{c}' to: {u}", c=company_name, u=resolved_url)
+                company_url = resolved_url
+                company_slug = _extract_company_slug(resolved_url)
+            else:
+                log.warning("Could not resolve company name to LinkedIn URL: {c}", c=company_name)
+                # Fall back to name-based queries (less accurate)
+        
+        # Step 3: Validate we have either a slug or a name
+        if not company_slug and not company_name:
+            result.error = "no_company_info"
+            log.error("No company name or URL provided")
             return result
-
-        raw_results = []
-        query_used = ""
-        fallback_level = 0
-
-        # Try each query level
-        for query, level in company_queries:
-            if not query.strip():
-                continue
-
-            log.info("Company search level {l}: {q}", l=level, q=query[:100])
-            raw_results = await client.search(query, pages=1)
-            log.info("Raw results count: {n}", n=len(raw_results))
-            query_used = query
-            fallback_level = level
-
-            if raw_results:
-                break
-
+        
+        # Step 4: Run company search
+        if company_slug:
+            log.info(
+                "Starting company search with slug: {s} (name: {n})",
+                s=company_slug,
+                n=company_name,
+            )
+            raw_results, query_used, fallback_level = await run_company_search(
+                company_slug=company_slug,
+                company_name=company_name,
+                client=client,
+            )
+        else:
+            # Fallback: use name-based queries (less accurate, marked as low confidence)
+            log.warning(
+                "No company slug available, falling back to name-based search: {n}",
+                n=company_name,
+            )
+            # This will use Level 3 fallback in build_company_xray_queries
+            raw_results, query_used, fallback_level = await run_company_search(
+                company_slug="__FALLBACK__",  # Signal that this is name-based
+                company_name=company_name,
+                client=client,
+            )
+        
         result.query_used = query_used
         result.fallback_level = fallback_level
-
+        
         if not raw_results:
             result.error = "no_results"
-            log.warning("No results for company '{c}'", c=company_name)
+            log.warning("No results for company '{c}' (slug: {s})", c=company_name, s=company_slug)
             return result
-
-        # Parse results
+        
+        # Step 5: Parse results
         people = parse_organic_results(
             organic_results=raw_results,
             job_title="",
@@ -236,7 +272,10 @@ async def execute_company_search(request: SearchRequest) -> SearchResult:
             log.warning("Parsing returned 0 people from {n} raw results", n=len(raw_results))
             return result
 
-        # Score confidence based on fallback level and source
+        # Step 6: Score confidence based on fallback level
+        # Level 0 (direct company URL) = HIGH confidence
+        # Level 1-2 (company URL + keywords) = MEDIUM confidence
+        # Level 3+ (name-based fallback) = LOW confidence
         for person in people:
             if fallback_level == 0:
                 person.confidence = "HIGH"
@@ -245,7 +284,7 @@ async def execute_company_search(request: SearchRequest) -> SearchResult:
             else:
                 person.confidence = "LOW"
 
-        # Deduplicate by LinkedIn URL (simple dedup)
+        # Step 7: Deduplicate by LinkedIn URL
         seen_urls = set()
         deduplicated = []
         for person in people:
@@ -255,9 +294,10 @@ async def execute_company_search(request: SearchRequest) -> SearchResult:
 
         result.people = deduplicated
         log.info(
-            "Company search complete — {n} people found (level {l})",
+            "Company search complete — {n} people found (level {l}, slug: {s})",
             n=len(result.people),
             l=fallback_level,
+            s=company_slug or "NAME_BASED",
         )
 
         await append_results(request.user_id, result.people)
