@@ -4,7 +4,7 @@ company_resolver.py — Resolve company information from URLs and names.
 Handles:
   - LinkedIn company URLs: https://www.linkedin.com/company/example-company/
   - Website URLs: https://examplecompany.com
-  - Company names: "Google" → resolves to official LinkedIn company page
+  - Company names: "Google" → resolves to official LinkedIn company page via X-ray search
 
 Extracts company name, slug, and metadata.
 """
@@ -155,6 +155,13 @@ async def resolve_company_name_to_linkedin(company_name: str) -> str | None:
     
     Uses a targeted LinkedIn company search to find the official company page.
     
+    ✅ THIS FUNCTION FIXES THE BUG:
+    When user runs: /company Google
+    This resolves "Google" → "https://www.linkedin.com/company/google/"
+    
+    Instead of searching: site:linkedin.com/in "Google" (too broad)
+    The scraper now searches: site:linkedin.com/company/google/ (exact match)
+    
     Args:
         company_name: Human-readable company name (e.g., "Google Inc", "Apple")
     
@@ -179,24 +186,33 @@ async def resolve_company_name_to_linkedin(company_name: str) -> str | None:
         from xray_scraper import SerpAPIClient
         from config import settings
         
+        log.info("Resolving company name to LinkedIn URL: {c}", c=company_name)
+        
         client = SerpAPIClient(api_key=settings.SERPAPI_KEY)
         
-        # Search for the company on LinkedIn
+        # Search for the company on LinkedIn company pages
         # This query finds the official company page in search results
         search_query = f'"{company_name}" site:linkedin.com/company'
         
-        log.info("Resolving company name to LinkedIn URL: {c}", c=company_name)
+        log.debug("Company resolution query: {q}", q=search_query)
         raw_results = await client.search(search_query, pages=1)
         
         if not raw_results:
             log.warning("No LinkedIn company page found for: {c}", c=company_name)
+            await client.close()
             return None
         
         # Extract company URL from first result
         # Expected URL format: https://www.linkedin.com/company/company-slug/
-        for result in raw_results:
+        found_url = None
+        for idx, result in enumerate(raw_results):
             url = result.get("link", "")
-            if url and "linkedin.com/company/" in url.lower():
+            
+            if not url:
+                continue
+            
+            # Check if it's a LinkedIn company URL
+            if "linkedin.com/company/" in url.lower():
                 # Normalize the URL
                 url = url.lower()
                 if not url.startswith("http"):
@@ -206,15 +222,26 @@ async def resolve_company_name_to_linkedin(company_name: str) -> str | None:
                 if not url.endswith("/"):
                     url += "/"
                 
+                # Remove query parameters
+                url = url.split("?")[0]
+                
                 log.info(
-                    "Resolved company '{c}' to LinkedIn URL: {u}",
+                    "Resolved company '{c}' to LinkedIn URL: {u} (result #{r})",
                     c=company_name,
                     u=url,
+                    r=idx + 1,
                 )
-                return url
+                found_url = url
+                break
+        
+        await client.close()
+        
+        if found_url:
+            return found_url
         
         log.warning(
-            "Found results for '{c}' but no valid company URL format",
+            "Found {n} results for '{c}' but no valid company URL format",
+            n=len(raw_results),
             c=company_name,
         )
         return None
