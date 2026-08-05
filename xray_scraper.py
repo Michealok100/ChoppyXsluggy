@@ -8,7 +8,9 @@ fires async HTTP requests, applies progressive fallback on empty results.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from tenacity import (
@@ -79,37 +81,83 @@ def build_fallback_queries(
     return queries
 
 
-def build_company_xray_queries(company_name: str) -> list[tuple[str, int]]:
-    """Build progressive company X-ray queries.
-    
-    Level 0: site:linkedin.com/in "COMPANY_NAME"
-    Level 1: site:linkedin.com/in "COMPANY_NAME" employee
-    Level 2: site:linkedin.com/in "COMPANY_NAME" manager
-    Level 3: site:linkedin.com/in "COMPANY_NAME" director
+def _extract_company_slug(company_url: str) -> str | None:
     """
-    if not company_name or not company_name.strip():
+    Extract company slug from LinkedIn company URL.
+    
+    Example: "https://www.linkedin.com/company/google/" → "google"
+    """
+    if not company_url or "linkedin.com/company/" not in company_url.lower():
+        return None
+    
+    try:
+        parsed = urlparse(company_url)
+        path = parsed.path.rstrip("/")
+        
+        # Extract slug between /company/ and trailing /
+        match = re.search(r"/company/([^/]+)", path)
+        if match:
+            return match.group(1)
+    except Exception as exc:
+        log.warning("Error extracting company slug from {u}: {e}", u=company_url, e=exc)
+    
+    return None
+
+
+def build_company_xray_queries(
+    company_slug: str,
+    company_name: Optional[str] = None,
+) -> list[tuple[str, int]]:
+    """Build progressive company X-ray queries using company slug/LinkedIn URL.
+    
+    ✅ Level 0: site:linkedin.com/company/google (only employees at that company)
+    ✅ Level 1: site:linkedin.com/company/google with "employee" keyword
+    ✅ Level 2: site:linkedin.com/company/google with seniority keywords
+    ✅ Level 3: Fallback to name-based search if slug fails
+    
+    Args:
+        company_slug: LinkedIn company slug (e.g., "google", "apple-inc")
+        company_name: Human-readable company name (used as fallback)
+    
+    Returns:
+        List of (query, fallback_level) tuples
+    """
+    if not company_slug or not company_slug.strip():
+        log.warning("Empty company slug provided")
         return []
     
-    company_name = company_name.strip()
+    company_slug = company_slug.strip().lower()
     queries: list[tuple[str, int]] = []
     
-    # Level 0: base query
-    base_query = f'site:linkedin.com/in "{company_name}"'
+    # ✅ Level 0: Base company page query (most specific)
+    # This ONLY matches people who explicitly list this company on their profile
+    base_query = f'site:linkedin.com/company/{company_slug}/'
     queries.append((base_query, 0))
     
-    # Level 1: with employee keyword
-    employee_query = f'site:linkedin.com/in "{company_name}" employee'
+    # ✅ Level 1: Company page + "employee" keyword
+    # Filters for people who mention they work there
+    employee_query = f'site:linkedin.com/company/{company_slug}/ "employee"'
     queries.append((employee_query, 1))
     
-    # Level 2: with manager keyword
-    manager_query = f'site:linkedin.com/in "{company_name}" manager'
-    queries.append((manager_query, 2))
+    # ✅ Level 2: Company page + seniority/current keywords
+    # Targets managers, directors, leads, etc.
+    seniority_query = (
+        f'site:linkedin.com/company/{company_slug}/ '
+        f'("manager" OR "director" OR "engineer" OR "senior" OR "lead")'
+    )
+    queries.append((seniority_query, 2))
     
-    # Level 3: with director/executive keywords
-    director_query = f'site:linkedin.com/in "{company_name}" (director OR executive OR founder OR ceo)'
-    queries.append((director_query, 3))
+    # ✅ Level 3: Fallback to company name search if slug-based search fails
+    # Only if company_name provided
+    if company_name and company_name.strip():
+        name_query = f'site:linkedin.com/in "{company_name.strip()}"'
+        queries.append((name_query, 3))
     
-    log.debug("Built {n} company queries for '{c}'", n=len(queries), c=company_name)
+    log.debug(
+        "Built {n} company queries for slug '{s}'",
+        n=len(queries),
+        s=company_slug,
+    )
     return queries
 
 
@@ -194,7 +242,7 @@ class SerpAPIClient:
         return all_results
 
 
-# ── High-level search orchestrator ────────────────────────────────────────────
+# ── High-level search orchestrators ──────────────────────────────────────────
 
 async def run_xray_search(
     job_title: str,
@@ -219,6 +267,61 @@ async def run_xray_search(
         await asyncio.sleep(settings.REQUEST_DELAY)
 
     return [], "", 5
+
+
+async def run_company_search(
+    company_slug: str,
+    company_name: Optional[str] = None,
+    client=None,
+    max_results: int = 15,
+) -> tuple[list[dict], str, int]:
+    """
+    High-level orchestrator for company employee search.
+    
+    Tries progressive query levels:
+    Level 0: Direct company slug search (most accurate)
+    Level 1: Company slug + "employee" keyword
+    Level 2: Company slug + seniority keywords
+    Level 3: Fallback to company name search
+    
+    Args:
+        company_slug: LinkedIn company slug (e.g., "google", "apple-inc")
+        company_name: Human-readable company name (used as fallback)
+        client: SerpAPIClient instance
+        max_results: Max results to return
+    
+    Returns:
+        (raw_results, query_used, fallback_level)
+    """
+    if client is None:
+        client = get_client()
+    
+    if not company_slug or not company_slug.strip():
+        log.error("Company slug is required for company search")
+        return [], "", -1
+    
+    candidate_queries = build_company_xray_queries(company_slug, company_name)
+    
+    if not candidate_queries:
+        log.error("No company queries generated for slug: {s}", s=company_slug)
+        return [], "", -1
+    
+    for query, level in candidate_queries:
+        if not query.strip():
+            continue
+        
+        log.info("Company search level {l}: {q}", l=level, q=query[:100])
+        raw_results = await client.search(query, pages=settings.SEARCH_PAGES)
+        log.info("Level {l} returned {n} results", l=level, n=len(raw_results))
+        
+        if raw_results:
+            return raw_results[:max_results], query, level
+        
+        log.info("No results at level {l}, escalating...", l=level)
+        await asyncio.sleep(settings.REQUEST_DELAY)
+    
+    log.warning("No results found at any level for company: {s}", s=company_slug)
+    return [], "", len(candidate_queries)
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────
