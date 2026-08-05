@@ -1,11 +1,12 @@
 """
-company_resolver.py — Resolve company information from URLs.
+company_resolver.py — Resolve company information from URLs and names.
 
 Handles:
   - LinkedIn company URLs: https://www.linkedin.com/company/example-company/
   - Website URLs: https://examplecompany.com
+  - Company names: "Google" → resolves to official LinkedIn company page
 
-Extracts company name and metadata.
+Extracts company name, slug, and metadata.
 """
 
 from __future__ import annotations
@@ -146,3 +147,78 @@ def _is_valid_domain(url: str) -> bool:
     # Basic domain pattern
     domain_pattern = re.compile(r"^[a-z0-9]([a-z0-9-]*\.)*[a-z]{2,}$")
     return bool(domain_pattern.match(url))
+
+
+async def resolve_company_name_to_linkedin(company_name: str) -> str | None:
+    """
+    Resolve a company name to its LinkedIn company URL via X-ray search.
+    
+    Uses a targeted LinkedIn company search to find the official company page.
+    
+    Args:
+        company_name: Human-readable company name (e.g., "Google Inc", "Apple")
+    
+    Returns:
+        LinkedIn company URL if found (e.g., "https://www.linkedin.com/company/google/")
+        or None if not found
+    
+    Example:
+        "Google" → "https://www.linkedin.com/company/google/"
+        "Apple Inc" → "https://www.linkedin.com/company/apple/"
+    """
+    if not company_name or not isinstance(company_name, str):
+        log.warning("Invalid company name input: {n}", n=company_name)
+        return None
+    
+    company_name = company_name.strip()
+    if not company_name:
+        return None
+    
+    try:
+        # Import here to avoid circular dependency
+        from xray_scraper import SerpAPIClient
+        from config import settings
+        
+        client = SerpAPIClient(api_key=settings.SERPAPI_KEY)
+        
+        # Search for the company on LinkedIn
+        # This query finds the official company page in search results
+        search_query = f'"{company_name}" site:linkedin.com/company'
+        
+        log.info("Resolving company name to LinkedIn URL: {c}", c=company_name)
+        raw_results = await client.search(search_query, pages=1)
+        
+        if not raw_results:
+            log.warning("No LinkedIn company page found for: {c}", c=company_name)
+            return None
+        
+        # Extract company URL from first result
+        # Expected URL format: https://www.linkedin.com/company/company-slug/
+        for result in raw_results:
+            url = result.get("link", "")
+            if url and "linkedin.com/company/" in url.lower():
+                # Normalize the URL
+                url = url.lower()
+                if not url.startswith("http"):
+                    url = f"https://{url}"
+                
+                # Ensure it ends with /
+                if not url.endswith("/"):
+                    url += "/"
+                
+                log.info(
+                    "Resolved company '{c}' to LinkedIn URL: {u}",
+                    c=company_name,
+                    u=url,
+                )
+                return url
+        
+        log.warning(
+            "Found results for '{c}' but no valid company URL format",
+            c=company_name,
+        )
+        return None
+    
+    except Exception as exc:
+        log.error("Error resolving company name '{c}': {e}", c=company_name, e=exc)
+        return None
